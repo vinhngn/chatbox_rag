@@ -53,18 +53,8 @@ Here are some examples:
 ### Example 1
 Natural Language Question:
 Which papers mention anomalous temperature regimes such as cold air outbreaks (CAOs) or warm waves (WWs) in relation to North America, specifically in the sentences where these terms appear?
-
-Intent:
-The user wants to locate mentions of CAOs or WWs, explicitly in sentences that also mention "North America".
-
-Interpretation:
-- The user is querying for instances of the node type <Paper> that are connected via a <MENTION> relationship to entities of type <WeatherEvent> whose names include "cold air outbreak" or "warm wave".
-- Additionally, the <WeatherEvent> is expected to be linked via <TargetsLocation> to a <Location> node with Name = "North America".
-- The constraint is that the mention must occur within the same sentence, which may involve filtering on Mention_Sentence.
-
-Sample Triplets:
-- <Paper> -[MENTION]-> <WeatherEvent>
-- <WeatherEvent> -[TargetsLocation]-> <Location (Name = "North America")>
+Intent: 
+The user is looking for scientific papers that explicitly refer to cold air outbreaks or warm waves and want these terms to be mentioned in the same sentence as a reference to North America. The focus is on detecting specific events (CAOs or WWs) and understanding where they are discussed geographically—specifically in the North American context.
 
 Cypher:
 MATCH (we)-[:TargetsLocation]-(l{{Name:"NORTH_AMERICA"}}) 
@@ -77,17 +67,8 @@ RETURN p,l,we;
 ### Example 2
 Natural Language Question:
 Which papers discuss ocean circulation processes—such as thermohaline circulation—in oceanic regions that include either “North” or “South” in their names?
-
-Intent:
-Retrieve papers that mention specific ocean circulation processes and associate them with named oceanic regions.
-
-Interpretation:
-- The user is asking for <Paper> nodes linked via <MENTION> to <OceanCirculation> nodes (e.g., "thermohaline circulation").
-- These <OceanCirculation> nodes are expected to be linked via <TargetsLocation> to <Location> nodes where the name contains "North" or "South".
-
-Sample Triplets:
-- <Paper> -[MENTION]-> <OceanCirculation>
-- <OceanCirculation> -[TargetsLocation]-> <Location (Name CONTAINS "North" OR "South")>
+Intent: 
+This question aims to find papers that talk about large-scale ocean circulation processes (like thermohaline circulation) and relate them to ocean basins or regions with names containing "North" or "South" such as the North Atlantic or South Pacific. The interest is in both the process and the spatial domain it affects.
 
 Cypher:
 MATCH (n:Location) 
@@ -102,20 +83,8 @@ RETURN n,oc,p;
 ### Example 3
 Natural Language Question:
 Which papers mention CMIP5 models and the North Atlantic Oscillation (NAO) in the context of the Southeast United States?
-
-Intent:
-Identify studies linking CMIP5 model simulations to NAO impacts in the Southeast U.S.
-
-Interpretation:
-- Querying for <Paper> nodes that mention:
-  - A <Model|Project> node with Name = "CMIP5"
-  - A <Teleconnection (Name = "NAO")> linked via <TargetsLocation> to <Location (Name includes "Southeast")>
-- Implicit expectation that these concepts are co-mentioned in the paper.
-
-Sample Triplets:
-- <Paper> -[MENTION]-> <Model|Project (CMIP5)>
-- <Paper> -[MENTION]-> <Teleconnection (NAO)>
-- <Teleconnection> -[TargetsLocation]-> <Location (Southeast US)>
+Intent: 
+The user wants to identify papers that make a connection between CMIP5 climate models and the North Atlantic Oscillation (NAO), particularly in studies or findings that are relevant to the Southeast U.S. They’re looking for discussion of model-based simulation or analysis where NAO impacts this region and CMIP5 is the modeling framework used.
 
 Cypher:
 MATCH (p:Paper)-[r:Mention]->(m:Model|Project) 
@@ -130,18 +99,6 @@ RETURN p,m,n;
 Natural Language Question:
 Which papers mention the Pacific-North American (PNA) pattern in connection with locations in the United States?
 
-Intent:
-Search for papers that mention the PNA pattern and link it to U.S. regions or cities.
-
-Interpretation:
-- Looking for <Paper> nodes that mention <Teleconnection (Name = "PNA")>
-- The <Teleconnection> should be linked to <Location> nodes associated with <Country (Name = "USA")>, inferred via description or relation.
-
-Sample Triplets:
-- <Paper> -[MENTION]-> <Teleconnection (PNA)>
-- <Teleconnection> -[TargetsLocation]-> <Location>
-- <Location> -[IN_COUNTRY]-> <Country (USA)> or contains "United States" in description
-
 Cypher:
 MATCH (p:Paper)-[z:Mention]->(t:Teleconnection{{Name:"PACIFIC_NORTH_AMERICAN_PNA_PATTERN"}}) 
 MATCH (t)-[:TargetsLocation]-(l:Location) 
@@ -149,9 +106,9 @@ MATCH (p)-[z:Mention]-(l)
 WHERE l.wikidata_description CONTAINS "United States" 
 RETURN p,t,l;
 
-Now generate a Cypher query for:
-{question}
+---
 
+{question}
 """
 
 CYPHER_GENERATION_PROMPT = PromptTemplate(
@@ -183,12 +140,12 @@ graph_chain = GraphCypherQAChain.from_llm(
     #qa_llm=ChatOllama(model = "qwen2", temperature = 0),
     cypher_llm = ChatOpenAI(
          openai_api_key=st.secrets["OPENAI_API_KEY"], 
-         temperature = 0, 
+         temperature = 0.3, 
          model_name = "gpt-4o-mini"
      ),
      qa_llm = ChatOpenAI(
          openai_api_key = st.secrets["OPENAI_API_KEY"], 
-         temperature = 0, 
+         temperature = 0.7, 
          model_name = "gpt-4o-mini"),
     graph = graph,
     cypher_prompt = CYPHER_GENERATION_PROMPT,  
@@ -201,8 +158,12 @@ graph_chain = GraphCypherQAChain.from_llm(
 
 
 @retry(tries = 2, delay = 12)
-def get_results(question) -> str:
+def get_results(question: str) -> str:
+    
+    [question, history] = question.split('///////////////')
     """Generate a response from the GraphCypherQAChain using a cleaned schema and improved prompt."""
+    
+    print(f'History: {history}')
     
     logging.info(f'Using Neo4j database at URL: {url}')
     graph.refresh_schema()
@@ -211,7 +172,13 @@ def get_results(question) -> str:
     #print("\n========= Raw Schema from Neo4j =========\n")
     #print(graph.get_schema)
 
-    prompt = CYPHER_GENERATION_PROMPT.format(schema = graph.get_schema, question = question)
+    prompt = CYPHER_GENERATION_PROMPT.format(schema = graph.get_schema, question=f'''
+Here is history chat bot:
+{history}
+
+Now generate a Cypher query for:
+{question}                                          
+''')
     print('\n========= Prompt to LLM =========\n')
     print(prompt)
 
